@@ -127,6 +127,10 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/', (req, res) => {
+  res.type('text/plain').send('ACC MCP server is running. Connect to it at /mcp.');
+});
+
 // --- MCP OAuth discovery -----------------------------------------------
 // These let Claude auto-discover how to authorize against this server.
 app.get('/.well-known/oauth-protected-resource', (req, res) => {
