@@ -269,16 +269,22 @@ app.post('/token', express.urlencoded({ extended: true }), async (req, res) => {
 });
 
 // --- Middleware: resolve the ACC session from the Bearer token ----------
+function sendUnauthorized(res, error) {
+  const resourceMetadataUrl = `${PUBLIC_BASE_URL}/.well-known/oauth-protected-resource`;
+  res.set('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl}"`);
+  res.status(401).json({ error });
+}
+
 function requireSession(req, res, next) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'unauthorized' });
+  if (!token) return sendUnauthorized(res, 'unauthorized');
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     req.sessionId = payload.sessionId;
     next();
   } catch {
-    res.status(401).json({ error: 'invalid_token' });
+    sendUnauthorized(res, 'invalid_token');
   }
 }
 
