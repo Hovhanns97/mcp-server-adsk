@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ACC Model Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css">
+  <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1a1a1a; font-family: sans-serif; }
+    #viewer { width: 100%; height: 100%; }
+    #status { color: #eee; padding: 24px; }
+  </style>
+</head>
+<body>
+  <div id="status">Loading model…</div>
+  <div id="viewer" style="display:none;"></div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const session = params.get('session');
+    const statusEl = document.getElementById('status');
+    const viewerEl = document.getElementById('viewer');
+
+    if (!session) {
+      statusEl.textContent = 'Missing session token — ask Claude for a fresh viewer link.';
+    } else {
+      fetch(`/api/viewer-session?session=${encodeURIComponent(session)}`)
+        .then(r => {
+          if (!r.ok) throw new Error('Link expired or invalid.');
+          return r.json();
+        })
+        .then(({ urn, accessToken }) => {
+          const options = {
+            env: 'AutodeskProduction',
+            api: 'derivativeV2',
+            getAccessToken: (onSuccess) => onSuccess(accessToken, 3000),
+          };
+          Autodesk.Viewing.Initializer(options, () => {
+            statusEl.style.display = 'none';
+            viewerEl.style.display = 'block';
+            const viewer = new Autodesk.Viewing.GuiViewer3D(viewerEl);
+            viewer.start();
+            Autodesk.Viewing.Document.load(
+              'urn:' + urn,
+              (doc) => {
+                const defaultModel = doc.getRoot().getDefaultGeometry();
+                viewer.loadDocumentNode(doc, defaultModel);
+              },
+              (err) => {
+                viewerEl.style.display = 'none';
+                statusEl.style.display = 'block';
+                statusEl.textContent = 'Failed to load model: ' + err;
+              }
+            );
+          });
+        })
+        .catch((err) => {
+          statusEl.textContent = err.message;
+        });
+    }
+  </script>
+</body>
+</html>

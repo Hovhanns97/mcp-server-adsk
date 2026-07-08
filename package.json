@@ -1,0 +1,20 @@
+{
+  "name": "acc-mcp-server",
+  "version": "1.0.0",
+  "description": "Remote (Streamable HTTP) MCP server exposing Autodesk Construction Cloud / APS data to Claude web, with a hosted Autodesk Viewer page.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.19.2",
+    "axios": "^1.7.7",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  }
+}
