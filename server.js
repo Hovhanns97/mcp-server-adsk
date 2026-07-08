@@ -401,6 +401,25 @@ app.post('/mcp', requireSession, async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 
+// Stateless server: GET/DELETE aren't supported, but must still return a
+// well-formed JSON-RPC error instead of falling through to Express's default
+// HTML 404 — some MCP clients hard-fail if the response isn't valid JSON.
+app.get('/mcp', (req, res) => {
+  res.status(405).json({
+    jsonrpc: '2.0',
+    error: { code: -32000, message: 'Method not allowed.' },
+    id: null,
+  });
+});
+
+app.delete('/mcp', (req, res) => {
+  res.status(405).json({
+    jsonrpc: '2.0',
+    error: { code: -32000, message: 'Method not allowed.' },
+    id: null,
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Hosted viewer page + its token-exchange endpoint
 // ---------------------------------------------------------------------------
