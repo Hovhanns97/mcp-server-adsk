@@ -4,9 +4,14 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+const { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } = require('@modelcontextprotocol/ext-apps/server');
 const { z } = require('zod');
+
+const VIEWER_APP_RESOURCE_URI = 'ui://acc-viewer/mcp-app-viewer.html';
+const AUTODESK_DOMAINS = ['https://developer.api.autodesk.com', 'https://*.autodesk.com'];
 
 // ---------------------------------------------------------------------------
 // Config
@@ -86,22 +91,6 @@ async function refreshApsToken(refreshToken) {
     }
   );
   return res.data;
-}
-
-async function get2LeggedViewerToken() {
-  // 2-legged token, viewables:read only — safe to hand to a browser-side viewer.
-  const res = await axios.post(
-    `${APS_AUTH_BASE}/token`,
-    new URLSearchParams({
-      grant_type: 'client_credentials',
-      scope: 'viewables:read',
-    }),
-    {
-      auth: { username: APS_CLIENT_ID, password: APS_CLIENT_SECRET },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    }
-  );
-  return res.data.access_token;
 }
 
 async function getValidApsAccessToken(sessionId) {
@@ -368,13 +357,15 @@ function buildMcpServer(sessionId) {
     }
   );
 
-  mcp.registerTool(
+  registerAppTool(
+    mcp,
     'get_viewer_link',
     {
       title: 'Get a viewer link for a model',
       description:
-        "Get a hosted-viewer URL for a specific model item so the user can open it in their browser. Needs project_id and item_id (from list_folder_contents, where type is 'items').",
+        "Open a model item in an interactive 3D viewer, inline in this chat when supported (falls back to a browser link otherwise). Needs project_id and item_id (from list_folder_contents, where type is 'items').",
       inputSchema: { project_id: z.string(), item_id: z.string() },
+      _meta: { ui: { resourceUri: VIEWER_APP_RESOURCE_URI } },
     },
     async ({ project_id, item_id }) => {
       const token = await getValidApsAccessToken(sessionId);
@@ -390,17 +381,60 @@ function buildMcpServer(sessionId) {
       const derivativeUrn = version.data.relationships.derivatives.data.id;
       const urnBase64 = Buffer.from(derivativeUrn).toString('base64').replace(/=/g, '');
 
-      const viewerToken = jwt.sign({ urn: urnBase64 }, JWT_SECRET, { expiresIn: '15m' });
+      const viewerToken = jwt.sign({ urn: urnBase64, sessionId }, JWT_SECRET, { expiresIn: '15m' });
       const viewerUrl = `${PUBLIC_BASE_URL}/viewer?session=${viewerToken}`;
       return {
         content: [
           {
             type: 'text',
-            text: `Open this link in a browser to view the model:\n${viewerUrl}\n\n(Link expires in 15 minutes.)`,
+            text: `Opening the model in the viewer. If it doesn't render inline, open this link in a browser:\n${viewerUrl}\n\n(Link expires in 15 minutes.)`,
           },
         ],
+        _meta: { urn: urnBase64 },
       };
     }
+  );
+
+  // Hidden from the model — only the viewer app UI calls this (via
+  // app.callServerTool) to get a fresh, scoped token for the viewer SDK,
+  // so no APS access token is ever exposed in chat/text content.
+  registerAppTool(
+    mcp,
+    '_get_viewer_access_token',
+    {
+      title: 'Get viewer access token',
+      description: 'Internal: fetch a short-lived access token for the model viewer UI.',
+      inputSchema: {},
+      _meta: { ui: { visibility: ['app'] } },
+    },
+    async () => {
+      const accessToken = await getValidApsAccessToken(sessionId);
+      return { content: [{ type: 'text', text: accessToken }] };
+    }
+  );
+
+  registerAppResource(
+    mcp,
+    'ACC Model Viewer',
+    VIEWER_APP_RESOURCE_URI,
+    { mimeType: RESOURCE_MIME_TYPE },
+    async () => ({
+      contents: [
+        {
+          uri: VIEWER_APP_RESOURCE_URI,
+          mimeType: RESOURCE_MIME_TYPE,
+          text: fs.readFileSync(path.join(__dirname, 'public', 'mcp-app-viewer.html'), 'utf-8'),
+          _meta: {
+            ui: {
+              csp: {
+                resourceDomains: [...AUTODESK_DOMAINS, 'https://esm.sh', 'https://*.esm.sh'],
+                connectDomains: AUTODESK_DOMAINS,
+              },
+            },
+          },
+        },
+      ],
+    })
   );
 
   return mcp;
@@ -440,8 +474,8 @@ app.delete('/mcp', (req, res) => {
 app.get('/api/viewer-session', async (req, res) => {
   const { session } = req.query;
   try {
-    const { urn } = jwt.verify(session, JWT_SECRET);
-    const accessToken = await get2LeggedViewerToken();
+    const { urn, sessionId } = jwt.verify(session, JWT_SECRET);
+    const accessToken = await getValidApsAccessToken(sessionId);
     res.json({ urn, accessToken });
   } catch {
     res.status(400).json({ error: 'Invalid or expired viewer session link.' });

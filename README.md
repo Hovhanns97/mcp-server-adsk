@@ -117,6 +117,8 @@ Autodesk Viewer with your model loaded.
   the corresponding APS endpoints the same way — the pattern in
   `server.js` (`mcp.registerTool(...)`) is copy-pasteable.
 
-- **Viewer page uses a 2-legged token** (`viewables:read` only, via client
-  credentials) scoped just to rendering geometry, not your personal 3-legged
-  token — so the link is safe to open even though it's not tied to a login.
+- **Viewer page uses your 3-legged session token.** ACC/BIM 360-hosted
+  derivatives require the viewing user's own account access — a generic
+  app-level 2-legged token can't read their manifests — so the viewer link
+  is tied to your login and expires with the short-lived signed link (15
+  min), not a separate long-lived credential.

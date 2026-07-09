@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ACC Model Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #1a1a1a;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+      }
+      #viewer { width: 100%; height: 100%; display: none; }
+      #status { color: #eee; padding: 24px; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="status">Waiting for model…</div>
+    <div id="viewer"></div>
+
+    <script type="module">
+      // Static <script src="..."> / <link> tags don't reliably execute for
+      // resources fetched into a srcdoc iframe, so every external resource
+      // (the Autodesk Viewer SDK, the ext-apps client bridge) is loaded
+      // dynamically at runtime instead.
+      const statusEl = document.getElementById('status');
+      const viewerEl = document.getElementById('viewer');
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+        statusEl.style.display = 'block';
+        viewerEl.style.display = 'none';
+      }
+
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          const el = document.createElement('script');
+          el.src = src;
+          el.onload = resolve;
+          el.onerror = () => reject(new Error('Failed to load ' + src));
+          document.head.appendChild(el);
+        });
+      }
+
+      function loadStyle(href) {
+        return new Promise((resolve, reject) => {
+          const el = document.createElement('link');
+          el.rel = 'stylesheet';
+          el.href = href;
+          el.onload = resolve;
+          el.onerror = () => reject(new Error('Failed to load ' + href));
+          document.head.appendChild(el);
+        });
+      }
+
+      async function loadAutodeskViewer() {
+        if (window.Autodesk && window.Autodesk.Viewing) return;
+        await loadStyle('https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css');
+        await loadScript('https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js');
+      }
+
+      async function main() {
+        const { App } = await import('https://esm.sh/@modelcontextprotocol/ext-apps@1.7.4');
+        const app = new App({ name: 'ACC Model Viewer', version: '1.0.0' }, {});
+
+        let urn = null;
+
+        async function renderModel() {
+          if (!urn) return;
+          try {
+            setStatus('Loading model…');
+            await loadAutodeskViewer();
+
+            const tokenResult = await app.callServerTool({
+              name: '_get_viewer_access_token',
+              arguments: {},
+            });
+            if (tokenResult.isError) throw new Error('Could not get a viewer access token.');
+            const accessToken = tokenResult.content?.find((c) => c.type === 'text')?.text;
+            if (!accessToken) throw new Error('No access token returned.');
+
+            const options = {
+              env: 'AutodeskProduction',
+              api: 'derivativeV2',
+              getAccessToken: (onSuccess) => onSuccess(accessToken, 3000),
+            };
+
+            window.Autodesk.Viewing.Initializer(options, () => {
+              statusEl.style.display = 'none';
+              viewerEl.style.display = 'block';
+              const viewer = new window.Autodesk.Viewing.GuiViewer3D(viewerEl);
+              viewer.start();
+              window.Autodesk.Viewing.Document.load(
+                'urn:' + urn,
+                (doc) => {
+                  const defaultModel = doc.getRoot().getDefaultGeometry();
+                  viewer.loadDocumentNode(doc, defaultModel);
+                },
+                (err) => {
+                  setStatus('Failed to load model: ' + err);
+                }
+              );
+            });
+          } catch (err) {
+            setStatus(err.message || String(err));
+          }
+        }
+
+        // Registered before connect() — the host sends the originating
+        // tool's result once, shortly after the ui/initialize handshake.
+        app.ontoolresult = (result) => {
+          if (result?._meta?.urn) {
+            urn = String(result._meta.urn);
+            renderModel();
+          }
+        };
+
+        await app.connect();
+      }
+
+      main().catch((err) => setStatus(err.message || String(err)));
+    </script>
+  </body>
+</html>
