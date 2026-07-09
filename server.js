@@ -184,6 +184,14 @@ function elementCategory(obj) {
       if (group[key]) return String(group[key]);
     }
   }
+  // Model Derivative's flat properties list doesn't always expose an
+  // explicit Category property (it's normally only in the browser tree
+  // hierarchy) — fall back to the family/type name baked into the
+  // object's own name, e.g. "Basic Wall [2448]" -> "Basic Wall".
+  if (obj.name) {
+    const cleaned = obj.name.replace(/\s*\[\d+\]\s*$/, '').trim();
+    if (cleaned) return cleaned;
+  }
   return 'Uncategorized';
 }
 
@@ -440,11 +448,11 @@ function buildMcpServer(sessionId) {
     {
       title: 'Count model elements',
       description:
-        "Get element counts from a model. Without a category, returns a breakdown of element counts across the whole model (e.g. Doors, Windows, Walls). With a category (e.g. \"Doors\"), returns the count and a sample of matching element names. Needs project_id and item_id (from list_folder_contents, where type is 'items').",
+        "Get element counts from a model. Without a category, returns a breakdown of element counts by family/type name across the whole model — call this first to see the real names present, since they're derived from each element's name (e.g. \"Basic Wall\") rather than an official Revit category. With a category, returns the count and a sample of matching element names, matched by substring against those same names (e.g. \"Wall\" or \"Basic Wall\", not necessarily \"Doors\" unless a family is actually named that). Needs project_id and item_id (from list_folder_contents, where type is 'items').",
       inputSchema: {
         project_id: z.string(),
         item_id: z.string(),
-        category: z.string().optional().describe('Element category to count, e.g. "Doors", "Windows", "Walls". Omit for a full breakdown by category.'),
+        category: z.string().optional().describe('Substring to match against element family/type names (from the breakdown), e.g. "Wall", "Door". Omit for a full breakdown by name.'),
       },
     },
     withErrorLogging('count_model_elements', async ({ project_id, item_id, category }) => {
