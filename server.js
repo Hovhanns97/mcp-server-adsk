@@ -465,7 +465,9 @@ function buildMcpServer(sessionId) {
         // couple of raw property groups so the actual field names can be
         // inspected instead of guessing blind on the next attempt.
         if (breakdown.length === 1 && breakdown[0][0] === 'Uncategorized') {
-          result.debugRawPropertyGroups = elements.slice(0, 2).map(el => ({ name: el.name, properties: el.properties }));
+          const sample = elements.slice(0, 3).map(el => ({ name: el.name, properties: el.properties }));
+          result.debugRawPropertyGroups = sample;
+          console.log('[count_model_elements] raw property sample:', JSON.stringify(sample, null, 2));
         }
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
