@@ -120,7 +120,7 @@ async function getDerivativeUrn(token, project_id, item_id) {
     { headers: apsHeaders(token) }
   );
   const derivativeUrn = version.data.relationships.derivatives.data.id;
-  return Buffer.from(derivativeUrn).toString('base64').replace(/=/g, '');
+  return base64url(Buffer.from(derivativeUrn));
 }
 
 async function getDefaultModelViewGuid(token, urnBase64) {
