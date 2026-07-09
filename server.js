@@ -448,11 +448,12 @@ function buildMcpServer(sessionId) {
     {
       title: 'Count model elements',
       description:
-        "Get element counts from a model. Without a category, returns a breakdown of element counts by family/type name across the whole model — call this first to see the real names present, since they're derived from each element's name (e.g. \"Basic Wall\") rather than an official Revit category. With a category, returns the count and a sample of matching element names, matched by substring against those same names (e.g. \"Wall\" or \"Basic Wall\", not necessarily \"Doors\" unless a family is actually named that). Needs project_id and item_id (from list_folder_contents, where type is 'items').",
+        "Get element counts from a model. Autodesk's Model Derivative API doesn't reliably expose an official category (e.g. \"Doors\") for every translation, so counts are grouped by each element's family/type name instead (e.g. \"Basic Wall\", \"M_Single-Flush\"), which IS always present. " +
+        "Workflow: call WITHOUT category first to see every real family/type name and count in this model. Then decide which of those names semantically match what the user asked for (e.g. if the user asked for \"doors\" and the breakdown shows \"M_Single-Flush: 12\" and \"M_Double-Flush: 4\", those are the doors) and call again passing those exact name(s) as category (a string, or an array of strings to sum multiple matching names in one call) to get the precise count and sample. Don't assume a literal \"Doors\" entry will exist — match by real-world meaning against the names actually present. Needs project_id and item_id (from list_folder_contents, where type is 'items').",
       inputSchema: {
         project_id: z.string(),
         item_id: z.string(),
-        category: z.string().optional().describe('Substring to match against element family/type names (from the breakdown), e.g. "Wall", "Door". Omit for a full breakdown by name.'),
+        category: z.union([z.string(), z.array(z.string())]).optional().describe('One or more substrings to match against element family/type names (from the breakdown), e.g. "Wall" or ["M_Single-Flush", "M_Double-Flush"]. Omit for a full breakdown by name.'),
       },
     },
     withErrorLogging('count_model_elements', async ({ project_id, item_id, category }) => {
@@ -482,8 +483,11 @@ function buildMcpServer(sessionId) {
         };
       }
 
-      const needle = category.toLowerCase();
-      const matches = elements.filter(el => elementCategory(el).toLowerCase().includes(needle));
+      const needles = (Array.isArray(category) ? category : [category]).map(c => c.toLowerCase());
+      const matches = elements.filter(el => {
+        const cat = elementCategory(el).toLowerCase();
+        return needles.some(needle => cat.includes(needle));
+      });
       return {
         content: [
           {
