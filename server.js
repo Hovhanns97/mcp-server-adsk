@@ -123,12 +123,35 @@ async function getDerivativeUrn(token, project_id, item_id) {
   return base64url(Buffer.from(derivativeUrn));
 }
 
+function logApsFailure(context, status, data) {
+  console.error(`[APS ${context}] HTTP ${status}: ${JSON.stringify(data)}`);
+}
+
+function withErrorLogging(name, handler) {
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (err) {
+      if (err.response) {
+        logApsFailure(name, err.response.status, err.response.data);
+      } else {
+        console.error(`[tool:${name}] error:`, err.message);
+      }
+      throw err;
+    }
+  };
+}
+
 async function getDefaultModelViewGuid(token, urnBase64) {
-  const { data } = await axios.get(
+  const res = await axios.get(
     `${APS_DATA_BASE}/modelderivative/v2/designdata/${urnBase64}/metadata`,
-    { headers: apsHeaders(token) }
+    { headers: apsHeaders(token), validateStatus: () => true }
   );
-  const views = data.data?.metadata || [];
+  if (res.status >= 400) {
+    logApsFailure('metadata', res.status, res.data);
+    throw new Error(`Failed to fetch model views (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
+  }
+  const views = res.data.data?.metadata || [];
   if (!views.length) throw new Error('No viewable model views found — the model may still be translating.');
   const view3d = views.find(v => v.role === '3d') || views[0];
   return view3d.guid;
@@ -143,7 +166,8 @@ async function getModelProperties(token, urnBase64, guid) {
     throw new Error('Model properties are still being extracted by Autodesk — try again in a minute.');
   }
   if (res.status >= 400) {
-    throw new Error(`Failed to fetch model properties (HTTP ${res.status}).`);
+    logApsFailure('properties', res.status, res.data);
+    throw new Error(`Failed to fetch model properties (HTTP ${res.status}): ${JSON.stringify(res.data)}`);
   }
   return res.data.data?.collection || [];
 }
@@ -415,7 +439,7 @@ function buildMcpServer(sessionId) {
         category: z.string().optional().describe('Element category to count, e.g. "Doors", "Windows", "Walls". Omit for a full breakdown by category.'),
       },
     },
-    async ({ project_id, item_id, category }) => {
+    withErrorLogging('count_model_elements', async ({ project_id, item_id, category }) => {
       const token = await getValidApsAccessToken(sessionId);
       const urnBase64 = await getDerivativeUrn(token, project_id, item_id);
       const guid = await getDefaultModelViewGuid(token, urnBase64);
@@ -447,7 +471,7 @@ function buildMcpServer(sessionId) {
           },
         ],
       };
-    }
+    })
   );
 
   registerAppTool(
@@ -460,7 +484,7 @@ function buildMcpServer(sessionId) {
       inputSchema: { project_id: z.string(), item_id: z.string() },
       _meta: { ui: { resourceUri: VIEWER_APP_RESOURCE_URI } },
     },
-    async ({ project_id, item_id }) => {
+    withErrorLogging('get_viewer_link', async ({ project_id, item_id }) => {
       const token = await getValidApsAccessToken(sessionId);
       const urnBase64 = await getDerivativeUrn(token, project_id, item_id);
 
@@ -475,7 +499,7 @@ function buildMcpServer(sessionId) {
         ],
         _meta: { urn: urnBase64 },
       };
-    }
+    })
   );
 
   // Hidden from the model — only the viewer app UI calls this (via
@@ -490,10 +514,10 @@ function buildMcpServer(sessionId) {
       inputSchema: {},
       _meta: { ui: { visibility: ['app'] } },
     },
-    async () => {
+    withErrorLogging('_get_viewer_access_token', async () => {
       const accessToken = await getValidApsAccessToken(sessionId);
       return { content: [{ type: 'text', text: accessToken }] };
-    }
+    })
   );
 
   registerAppResource(
@@ -560,7 +584,8 @@ app.get('/api/viewer-session', async (req, res) => {
     const { urn, sessionId } = jwt.verify(session, JWT_SECRET);
     const accessToken = await getValidApsAccessToken(sessionId);
     res.json({ urn, accessToken });
-  } catch {
+  } catch (err) {
+    console.error('[viewer-session] error:', err.response?.data || err.message);
     res.status(400).json({ error: 'Invalid or expired viewer session link.' });
   }
 });
