@@ -549,6 +549,9 @@ function buildMcpServer(sessionId) {
 
 // --- MCP endpoint (Streamable HTTP) --------------------------------------
 app.post('/mcp', requireSession, async (req, res) => {
+  if (req.body?.method === 'initialize') {
+    console.log('[mcp] initialize from client:', JSON.stringify(req.body.params?.clientInfo), 'capabilities:', JSON.stringify(req.body.params?.capabilities));
+  }
   const mcp = buildMcpServer(req.sessionId);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => transport.close());
