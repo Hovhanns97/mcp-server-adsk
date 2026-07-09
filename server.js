@@ -109,6 +109,52 @@ function apsHeaders(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
+async function getDerivativeUrn(token, project_id, item_id) {
+  const { data: item } = await axios.get(
+    `${APS_DATA_BASE}/data/v1/projects/${project_id}/items/${item_id}`,
+    { headers: apsHeaders(token) }
+  );
+  const versionId = item.data.relationships.tip.data.id;
+  const { data: version } = await axios.get(
+    `${APS_DATA_BASE}/data/v1/projects/${project_id}/versions/${encodeURIComponent(versionId)}`,
+    { headers: apsHeaders(token) }
+  );
+  const derivativeUrn = version.data.relationships.derivatives.data.id;
+  return Buffer.from(derivativeUrn).toString('base64').replace(/=/g, '');
+}
+
+async function getDefaultModelViewGuid(token, urnBase64) {
+  const { data } = await axios.get(
+    `${APS_DATA_BASE}/modelderivative/v2/designdata/${urnBase64}/metadata`,
+    { headers: apsHeaders(token) }
+  );
+  const views = data.data?.metadata || [];
+  if (!views.length) throw new Error('No viewable model views found — the model may still be translating.');
+  const view3d = views.find(v => v.role === '3d') || views[0];
+  return view3d.guid;
+}
+
+async function getModelProperties(token, urnBase64, guid) {
+  const res = await axios.get(
+    `${APS_DATA_BASE}/modelderivative/v2/designdata/${urnBase64}/metadata/${guid}/properties`,
+    { headers: apsHeaders(token), validateStatus: () => true }
+  );
+  if (res.status === 202) {
+    throw new Error('Model properties are still being extracted by Autodesk — try again in a minute.');
+  }
+  if (res.status >= 400) {
+    throw new Error(`Failed to fetch model properties (HTTP ${res.status}).`);
+  }
+  return res.data.data?.collection || [];
+}
+
+function elementCategory(obj) {
+  for (const group of Object.values(obj.properties || {})) {
+    if (group && typeof group === 'object' && group.Category) return String(group.Category);
+  }
+  return 'Uncategorized';
+}
+
 // ---------------------------------------------------------------------------
 // Express app
 // ---------------------------------------------------------------------------
@@ -357,6 +403,53 @@ function buildMcpServer(sessionId) {
     }
   );
 
+  mcp.registerTool(
+    'count_model_elements',
+    {
+      title: 'Count model elements',
+      description:
+        "Get element counts from a model. Without a category, returns a breakdown of element counts across the whole model (e.g. Doors, Windows, Walls). With a category (e.g. \"Doors\"), returns the count and a sample of matching element names. Needs project_id and item_id (from list_folder_contents, where type is 'items').",
+      inputSchema: {
+        project_id: z.string(),
+        item_id: z.string(),
+        category: z.string().optional().describe('Element category to count, e.g. "Doors", "Windows", "Walls". Omit for a full breakdown by category.'),
+      },
+    },
+    async ({ project_id, item_id, category }) => {
+      const token = await getValidApsAccessToken(sessionId);
+      const urnBase64 = await getDerivativeUrn(token, project_id, item_id);
+      const guid = await getDefaultModelViewGuid(token, urnBase64);
+      const elements = await getModelProperties(token, urnBase64, guid);
+
+      if (!category) {
+        const counts = {};
+        for (const el of elements) {
+          const cat = elementCategory(el);
+          counts[cat] = (counts[cat] || 0) + 1;
+        }
+        const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ totalElements: elements.length, byCategory: breakdown }, null, 2) }],
+        };
+      }
+
+      const needle = category.toLowerCase();
+      const matches = elements.filter(el => elementCategory(el).toLowerCase().includes(needle));
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              { category, count: matches.length, sample: matches.slice(0, 20).map(el => el.name) },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
   registerAppTool(
     mcp,
     'get_viewer_link',
@@ -369,17 +462,7 @@ function buildMcpServer(sessionId) {
     },
     async ({ project_id, item_id }) => {
       const token = await getValidApsAccessToken(sessionId);
-      const { data: item } = await axios.get(
-        `${APS_DATA_BASE}/data/v1/projects/${project_id}/items/${item_id}`,
-        { headers: apsHeaders(token) }
-      );
-      const versionId = item.data.relationships.tip.data.id;
-      const { data: version } = await axios.get(
-        `${APS_DATA_BASE}/data/v1/projects/${project_id}/versions/${encodeURIComponent(versionId)}`,
-        { headers: apsHeaders(token) }
-      );
-      const derivativeUrn = version.data.relationships.derivatives.data.id;
-      const urnBase64 = Buffer.from(derivativeUrn).toString('base64').replace(/=/g, '');
+      const urnBase64 = await getDerivativeUrn(token, project_id, item_id);
 
       const viewerToken = jwt.sign({ urn: urnBase64, sessionId }, JWT_SECRET, { expiresIn: '15m' });
       const viewerUrl = `${PUBLIC_BASE_URL}/viewer?session=${viewerToken}`;
