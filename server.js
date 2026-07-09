@@ -174,9 +174,15 @@ async function getModelProperties(token, urnBase64, guid) {
   return res.data.data?.collection || [];
 }
 
+const CATEGORY_KEYS = ['Category', 'Category Name', 'IfcExportAs', 'IFC Type', 'Type', 'Element Type'];
+
 function elementCategory(obj) {
+  if (obj.category) return String(obj.category);
   for (const group of Object.values(obj.properties || {})) {
-    if (group && typeof group === 'object' && group.Category) return String(group.Category);
+    if (!group || typeof group !== 'object') continue;
+    for (const key of CATEGORY_KEYS) {
+      if (group[key]) return String(group[key]);
+    }
   }
   return 'Uncategorized';
 }
@@ -454,8 +460,15 @@ function buildMcpServer(sessionId) {
           counts[cat] = (counts[cat] || 0) + 1;
         }
         const breakdown = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        const result = { totalElements: elements.length, byCategory: breakdown };
+        // Self-diagnosing: if category detection failed entirely, include a
+        // couple of raw property groups so the actual field names can be
+        // inspected instead of guessing blind on the next attempt.
+        if (breakdown.length === 1 && breakdown[0][0] === 'Uncategorized') {
+          result.debugRawPropertyGroups = elements.slice(0, 2).map(el => ({ name: el.name, properties: el.properties }));
+        }
         return {
-          content: [{ type: 'text', text: JSON.stringify({ totalElements: elements.length, byCategory: breakdown }, null, 2) }],
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
       }
 
