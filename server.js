@@ -119,8 +119,10 @@ async function getDerivativeUrn(token, project_id, item_id) {
     `${APS_DATA_BASE}/data/v1/projects/${project_id}/versions/${encodeURIComponent(versionId)}`,
     { headers: apsHeaders(token) }
   );
-  const derivativeUrn = version.data.relationships.derivatives.data.id;
-  return base64url(Buffer.from(derivativeUrn));
+  // Data Management API already returns this as a base64 (URL-safe) encoded
+  // URN — encoding it again here produces a corrupted URN Model Derivative
+  // rejects as invalid, regardless of file format.
+  return version.data.relationships.derivatives.data.id;
 }
 
 function logApsFailure(context, status, data) {
