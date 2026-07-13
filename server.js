@@ -511,6 +511,7 @@ function buildMcpServer(sessionId) {
       description:
         "Open a model item in an interactive 3D viewer, inline in this chat when supported (falls back to a browser link otherwise). Needs project_id and item_id (from list_folder_contents, where type is 'items').",
       inputSchema: { project_id: z.string(), item_id: z.string() },
+      outputSchema: { viewerUrl: z.string() },
       _meta: { ui: { resourceUri: VIEWER_APP_RESOURCE_URI } },
     },
     withErrorLogging('get_viewer_link', async ({ project_id, item_id }) => {
@@ -526,7 +527,14 @@ function buildMcpServer(sessionId) {
             text: `Opening the model in the viewer. If it doesn't render inline, open this link in a browser:\n${viewerUrl}\n\n(Link expires in 15 minutes.)`,
           },
         ],
-        _meta: { urn: urnBase64 },
+        // The inline widget embeds `viewerUrl` in a nested iframe served from
+        // our own origin, so the Autodesk Viewer (workers/WASM/WebGL) runs
+        // outside the restrictive MCP-app sandbox CSP. Passed via both
+        // structuredContent (first-class, reliably forwarded to the app) and
+        // _meta (documented ext-apps channel) so whichever the host forwards
+        // reaches the widget.
+        structuredContent: { viewerUrl },
+        _meta: { urn: urnBase64, viewerUrl },
       };
     })
   );
@@ -563,8 +571,12 @@ function buildMcpServer(sessionId) {
           _meta: {
             ui: {
               csp: {
-                resourceDomains: [...AUTODESK_DOMAINS, 'https://esm.sh', 'https://*.esm.sh'],
-                connectDomains: AUTODESK_DOMAINS,
+                // The widget itself only needs esm.sh (the ext-apps bridge).
+                // The heavy Autodesk Viewer runs in a NESTED iframe served
+                // from our own origin — frameDomains authorizes embedding it.
+                resourceDomains: ['https://esm.sh', 'https://*.esm.sh'],
+                connectDomains: [],
+                frameDomains: [PUBLIC_BASE_URL],
               },
             },
           },
@@ -611,6 +623,10 @@ app.delete('/mcp', (req, res) => {
 // Hosted viewer page + its token-exchange endpoint
 // ---------------------------------------------------------------------------
 app.get('/api/viewer-session', async (req, res) => {
+  // The inline widget embeds /viewer in a sandboxed iframe, which the browser
+  // treats as an opaque (null) origin — so this XHR is cross-origin. It's a
+  // public, JWT-gated read, so allow any origin.
+  res.set('Access-Control-Allow-Origin', '*');
   const { session } = req.query;
   try {
     const { urn, sessionId } = jwt.verify(session, JWT_SECRET);
