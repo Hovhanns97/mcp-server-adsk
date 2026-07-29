@@ -524,7 +524,10 @@ function buildMcpServer(sessionId) {
         content: [
           {
             type: 'text',
-            text: `Opening the model in the viewer. If it doesn't render inline, open this link in a browser:\n${viewerUrl}\n\n(Link expires in 15 minutes.)`,
+            // Markdown link so the host renders a clickable "Open viewer"
+            // link instead of a bare URL the user has to copy. The raw URL is
+            // kept as a fallback for surfaces that don't render markdown.
+            text: `**[▶ Open the 3D model viewer](${viewerUrl})**\n\nOpens in a new browser tab; the link expires in 15 minutes. If it isn't clickable, copy this URL:\n${viewerUrl}`,
           },
         ],
         // The inline widget embeds `viewerUrl` in a nested iframe served from
