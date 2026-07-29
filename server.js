@@ -524,10 +524,15 @@ function buildMcpServer(sessionId) {
         content: [
           {
             type: 'text',
-            // Markdown link so the host renders a clickable "Open viewer"
-            // link instead of a bare URL the user has to copy. The raw URL is
-            // kept as a fallback for surfaces that don't render markdown.
-            text: `**[▶ Open the 3D model viewer](${viewerUrl})**\n\nOpens in a new browser tab; the link expires in 15 minutes. If it isn't clickable, copy this URL:\n${viewerUrl}`,
+            // claude.ai renders the tool-result box as plain, non-clickable
+            // text but renders the assistant's OWN reply as markdown. So we
+            // instruct the model to surface a clickable markdown link in its
+            // reply — that's the only claude.ai surface that linkifies.
+            text:
+              `Respond to the user with a clickable markdown link that opens the 3D model viewer ` +
+              `in a new browser tab. Output exactly this markdown link (do not show the raw URL, ` +
+              `do not wrap it in a code block):\n\n[▶ Open the 3D model viewer](${viewerUrl})\n\n` +
+              `Also tell them it opens in a new tab and the link expires in 15 minutes.`,
           },
         ],
         // The inline widget embeds `viewerUrl` in a nested iframe served from
