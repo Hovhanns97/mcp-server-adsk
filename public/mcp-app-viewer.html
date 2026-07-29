@@ -11,58 +11,92 @@
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         overflow: hidden;
       }
-      /* Give the 3D viewer a fixed canvas height inside the chat card. */
       #root { width: 100%; height: 600px; position: relative; }
-      #frame { width: 100%; height: 100%; border: 0; display: none; }
-      #status { color: #eee; padding: 24px; font-size: 14px; }
+      #frame { width: 100%; height: 100%; border: 0; display: none; background: #1a1a1a; }
+      /* Diagnostic overlay — stays visible on top so we can read state even
+         if the nested viewer iframe comes up blank. */
+      #log {
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        max-height: 100%;
+        overflow: auto;
+        margin: 0;
+        padding: 12px 14px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #d6f5d6;
+        background: rgba(0, 0, 0, 0.72);
+        white-space: pre-wrap;
+        word-break: break-all;
+        z-index: 10;
+      }
+      #log .err { color: #ff8f8f; }
+      #log .ok { color: #8fd6ff; }
     </style>
   </head>
   <body>
     <div id="root">
-      <div id="status">Waiting for model…</div>
-      <!--
-        The Autodesk Viewer needs Web Workers, WASM and WebGL, which the
-        MCP-app sandbox CSP cannot grant (it only allows adding domains, not
-        `worker-src blob:` / `'wasm-unsafe-eval'`). So we DON'T run the viewer
-        here. Instead we embed the hosted /viewer page from our own origin —
-        it ships with its own permissive CSP and runs the viewer normally.
-        `frameDomains` in the resource CSP authorizes this nested iframe.
-      -->
+      <pre id="log"></pre>
       <iframe id="frame" allow="fullscreen; xr-spatial-tracking"></iframe>
     </div>
 
     <script type="module">
-      const statusEl = document.getElementById('status');
+      const logEl = document.getElementById('log');
       const frameEl = document.getElementById('frame');
+      let n = 0;
 
-      function setStatus(text) {
-        statusEl.textContent = text;
-        statusEl.style.display = 'block';
-        frameEl.style.display = 'none';
+      function log(msg, cls) {
+        n += 1;
+        const line = document.createElement('span');
+        if (cls) line.className = cls;
+        line.textContent = `${String(n).padStart(2, '0')}  ${msg}\n`;
+        logEl.appendChild(line);
       }
 
+      log('widget booting…');
+
       function openViewer(url) {
+        log('viewerUrl received: ' + url.slice(0, 60) + '…', 'ok');
+        log('setting nested iframe src → loading /viewer …');
+        let loaded = false;
+        frameEl.onload = () => { loaded = true; log('nested iframe fired onload ✓', 'ok'); };
+        frameEl.onerror = () => log('nested iframe fired onerror ✗', 'err');
         frameEl.src = url;
-        statusEl.style.display = 'none';
         frameEl.style.display = 'block';
+        // If nothing loads in 8s, the frame navigation was almost certainly
+        // blocked (blank white with no console error == silently blocked).
+        setTimeout(() => {
+          if (!loaded) log('iframe has not loaded after 8s — navigation likely blocked by the host sandbox (frame-src).', 'err');
+        }, 8000);
       }
 
       async function main() {
-        const { App } = await import('https://esm.sh/@modelcontextprotocol/ext-apps@1.7.4');
+        log('importing ext-apps from esm.sh …');
+        let App;
+        try {
+          ({ App } = await import('https://esm.sh/@modelcontextprotocol/ext-apps@1.7.4'));
+        } catch (e) {
+          log('FAILED to import ext-apps: ' + (e.message || e), 'err');
+          throw e;
+        }
+        log('ext-apps imported ✓', 'ok');
+
         const app = new App({ name: 'ACC Model Viewer', version: '1.0.0' }, {});
 
-        // Registered before connect() — the host delivers the originating
-        // tool's result once, shortly after the ui/initialize handshake.
         app.ontoolresult = (result) => {
+          const keys = result ? Object.keys(result).join(', ') : '(null)';
+          log('ontoolresult fired. result keys: [' + keys + ']');
           const url = result?.structuredContent?.viewerUrl ?? result?._meta?.viewerUrl;
           if (url) openViewer(String(url));
-          else setStatus('The server did not return a viewer URL. Try requesting the model again.');
+          else log('no viewerUrl in structuredContent or _meta — data channel problem.', 'err');
         };
 
+        log('connecting to host (ui/initialize) …');
         await app.connect();
+        log('connected to host ✓  platform=' + (app.getHostContext()?.platform ?? '?'), 'ok');
+        log('waiting for ontoolresult …');
       }
 
-      main().catch((err) => setStatus(err.message || String(err)));
+      main().catch((err) => log('FATAL: ' + (err.message || String(err)), 'err'));
     </script>
   </body>
 </html>
